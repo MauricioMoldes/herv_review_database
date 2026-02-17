@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres-herv-db
+    environment:
+      POSTGRES_USER: herv
+      POSTGRES_PASSWORD: hervpass
+      POSTGRES_DB: herv
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herv -d herv"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  loader:
+    build: .
+    container_name: herv-loader
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: hervpass
+      DB_HOST: postgres
+      DB_USER: herv
+      DB_NAME: herv
+    volumes:
+      - ./data:/app/data
+      - ./src:/app/src
+
