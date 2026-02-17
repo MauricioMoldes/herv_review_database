@@ -1,0 +1,13 @@
+# Ignore all result/output folders
+results/
+
+# Optional: Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+
+# Optional: VSCode
+.vscode/
+
