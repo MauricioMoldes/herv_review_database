@@ -1,0 +1,16 @@
+# Dockerfile.api
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy API code
+COPY src/ /app/src/
+COPY requirements.txt /app/
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+EXPOSE 8000
+
+# Only run the FastAPI app
+CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
+

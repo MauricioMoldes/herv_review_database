@@ -52,6 +52,14 @@ def parse_coord(coord_string):
 
 
 def get_or_create(cur, table, unique_col, value):
+    """
+    Insert a value into a table if it doesn't exist and return the id.
+    Handles NaN and None properly.
+    """
+    # convert float NaN to None
+    if isinstance(value, float) and pd.isna(value):
+        value = None
+
     if value is None or value == "":
         return None
 
@@ -99,22 +107,22 @@ def main():
             cur,
             "herv_family",
             "name",
-            row["ERV_group"]
+            row.get("ERV_group")
         )
 
         # -------------------------------------------------
         # Subgroup
         # -------------------------------------------------
         subgroup_id = None
-        if pd.notna(row["ERV_subgroup"]):
-
+        subgroup_value = row.get("ERV_subgroup")
+        if pd.notna(subgroup_value):
             cur.execute("""
                 INSERT INTO herv_subgroup (herv_family_id, name)
                 VALUES (%s, %s)
                 ON CONFLICT (herv_family_id, name)
                 DO NOTHING
                 RETURNING id;
-            """, (family_id, row["ERV_subgroup"]))
+            """, (family_id, subgroup_value))
 
             result = cur.fetchone()
             if result:
@@ -123,7 +131,7 @@ def main():
                 cur.execute("""
                     SELECT id FROM herv_subgroup
                     WHERE herv_family_id=%s AND name=%s
-                """, (family_id, row["ERV_subgroup"]))
+                """, (family_id, subgroup_value))
                 subgroup_id = cur.fetchone()[0]
 
         # -------------------------------------------------
@@ -133,32 +141,35 @@ def main():
             cur,
             "herv_component",
             "name",
-            row["ERV_component"]
+            row.get("ERV_component")
         )
 
         # -------------------------------------------------
         # Biological Target
         # -------------------------------------------------
-        cur.execute("""
-            INSERT INTO biological_target
-            (herv_family_id, herv_subgroup_id, herv_component_id)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (herv_family_id, herv_subgroup_id, herv_component_id)
-            DO NOTHING
-            RETURNING id;
-        """, (family_id, subgroup_id, component_id))
-
-        result = cur.fetchone()
-        if result:
-            target_id = result[0]
-        else:
+        if family_id is not None and component_id is not None:
             cur.execute("""
-                SELECT id FROM biological_target
-                WHERE herv_family_id=%s
-                AND herv_subgroup_id IS NOT DISTINCT FROM %s
-                AND herv_component_id=%s
+                INSERT INTO biological_target
+                (herv_family_id, herv_subgroup_id, herv_component_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (herv_family_id, herv_subgroup_id, herv_component_id)
+                DO NOTHING
+                RETURNING id;
             """, (family_id, subgroup_id, component_id))
-            target_id = cur.fetchone()[0]
+
+            result = cur.fetchone()
+            if result:
+                target_id = result[0]
+            else:
+                cur.execute("""
+                    SELECT id FROM biological_target
+                    WHERE herv_family_id=%s
+                    AND herv_subgroup_id IS NOT DISTINCT FROM %s
+                    AND herv_component_id=%s
+                """, (family_id, subgroup_id, component_id))
+                target_id = cur.fetchone()[0]
+        else:
+            target_id = None
 
         # -------------------------------------------------
         # Primer Pair
@@ -187,51 +198,51 @@ def main():
         # -------------------------------------------------
         # Forward Primer
         # -------------------------------------------------
-        cur.execute("""
-            INSERT INTO primer (primer_pair_id, name, sequence, direction)
-            VALUES (%s, %s, %s, 'forward')
-            ON CONFLICT (primer_pair_id, direction)
-            DO NOTHING;
-        """, (
-            primer_pair_id,
-            row["fw_name"],
-            row["fw_primer"]
-        ))
+        fw_name = row.get("fw_name") if pd.notna(row.get("fw_name")) else None
+        fw_primer = row.get("fw_primer") if pd.notna(row.get("fw_primer")) else None
+        if fw_name and fw_primer:
+            cur.execute("""
+                INSERT INTO primer (primer_pair_id, name, sequence, direction)
+                VALUES (%s, %s, %s, 'forward')
+                ON CONFLICT (primer_pair_id, direction)
+                DO NOTHING;
+            """, (primer_pair_id, fw_name, fw_primer))
 
         # -------------------------------------------------
         # Reverse Primer
         # -------------------------------------------------
-        cur.execute("""
-            INSERT INTO primer (primer_pair_id, name, sequence, direction)
-            VALUES (%s, %s, %s, 'reverse')
-            ON CONFLICT (primer_pair_id, direction)
-            DO NOTHING;
-        """, (
-            primer_pair_id,
-            row["rev_name"],
-            row["rev_primer"]
-        ))
+        rev_name = row.get("rev_name") if pd.notna(row.get("rev_name")) else None
+        rev_primer = row.get("rev_primer") if pd.notna(row.get("rev_primer")) else None
+        if rev_name and rev_primer:
+            cur.execute("""
+                INSERT INTO primer (primer_pair_id, name, sequence, direction)
+                VALUES (%s, %s, %s, 'reverse')
+                ON CONFLICT (primer_pair_id, direction)
+                DO NOTHING;
+            """, (primer_pair_id, rev_name, rev_primer))
 
         # -------------------------------------------------
         # Link Primer ↔ Target
         # -------------------------------------------------
-        cur.execute("""
-            INSERT INTO primer_target (primer_pair_id, biological_target_id)
-            VALUES (%s, %s)
-            ON CONFLICT DO NOTHING;
-        """, (primer_pair_id, target_id))
+        if target_id:
+            cur.execute("""
+                INSERT INTO primer_target (primer_pair_id, biological_target_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING;
+            """, (primer_pair_id, target_id))
 
         # -------------------------------------------------
         # Locus + Coordinates
         # -------------------------------------------------
-        if pd.notna(row["locus"]):
-
+        locus_name = row.get("locus") if pd.notna(row.get("locus")) else None
+        if locus_name:
+            genbank_ac = row.get("genbank_AC") if pd.notna(row.get("genbank_AC")) else None
             cur.execute("""
                 INSERT INTO locus (name, genbank_accession)
                 VALUES (%s, %s)
                 ON CONFLICT DO NOTHING
                 RETURNING id;
-            """, (row["locus"], row["genbank_AC"]))
+            """, (locus_name, genbank_ac))
 
             result = cur.fetchone()
             if result:
@@ -239,7 +250,7 @@ def main():
             else:
                 cur.execute(
                     "SELECT id FROM locus WHERE name=%s",
-                    (row["locus"],)
+                    (locus_name,)
                 )
                 locus_id = cur.fetchone()[0]
 

@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   postgres:
     image: postgres:16
@@ -7,25 +9,64 @@ services:
       POSTGRES_PASSWORD: hervpass
       POSTGRES_DB: herv
     ports:
-      - "5434:5432"
+      - "5434:5432"   # local mapping
+    networks:
+      - herv_review_database_default
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U herv -d herv"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  cloudbeaver:
+    image: dbeaver/cloudbeaver
+    container_name: cloudbeaver-herv
+    ports:
+      - "8980:8978"
+    networks:
+      - herv_review_database_default
+
   loader:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.loader  # only runs entrypoint/load_herv_data.py
     container_name: herv-loader
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      PGPASSWORD: hervpass
       DB_HOST: postgres
       DB_USER: herv
+      DB_PASSWORD: hervpass
       DB_NAME: herv
+      PGPASSWORD: hervpass
+    networks:
+      - herv_review_database_default
     volumes:
       - ./data:/app/data
       - ./src:/app/src
+    restart: "no"  # runs once and exits after loading
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api  # only runs FastAPI via uvicorn
+    container_name: herv-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_USER: herv
+      DB_PASS: hervpass
+      DB_NAME: herv
+    ports:
+      - "8001:8000"
+    networks:
+      - herv_review_database_default
+    restart: unless-stopped
+
+networks:
+  herv_review_database_default:
+    driver: bridge
 
