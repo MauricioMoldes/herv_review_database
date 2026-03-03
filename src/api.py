@@ -167,6 +167,91 @@ async def get_primers(
 
     return results
 
+
+@app.get("/primer_pairs")
+async def search_primer_pairs(
+    erv_family: Optional[str] = None,
+    erv_subgroup: Optional[str] = None,
+    erv_component: Optional[str] = None,
+    herv_name: Optional[str] = None,
+    dna: Optional[bool] = None,
+    hervolution: Optional[bool] = None,
+    token: str = Depends(optional_token)
+):
+    is_private = False
+    if token:
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            if payload.get("role") == "private":
+                is_private = True
+        except JWTError:
+            pass
+
+    query = """
+        SELECT pf.sequence AS forward_seq,
+               pp.pair_index,
+               pp.dna,
+               pp.hervolution,
+               f.name AS family_name,
+               s.name AS subgroup_name,
+               c.name AS component_name,
+               bt.name AS herv_name,
+               json_agg(DISTINCT pr.sequence) AS reverse_seqs,
+               COALESCE(
+                 json_agg(
+                   DISTINCT jsonb_build_object(
+                       'title', b.title,
+                       'doi', b.doi,
+                       'year', b.year
+                   )
+                 ) FILTER (WHERE b.id IS NOT NULL), '[]'
+               ) AS references
+        FROM primer pf
+        JOIN primer_pair pp ON pp.id = pf.primer_pair_id
+        JOIN primer pr ON pr.primer_pair_id = pp.id AND pr.direction='reverse'
+        JOIN primer_target pt ON pt.primer_pair_id = pp.id
+        JOIN biological_target bt ON pt.biological_target_id = bt.id
+        JOIN herv_family f ON bt.herv_family_id = f.id
+        LEFT JOIN herv_subgroup s ON bt.herv_subgroup_id = s.id
+        JOIN herv_component c ON bt.herv_component_id = c.id
+        LEFT JOIN primer_target_reference ptr ON ptr.primer_pair_id = pp.id AND ptr.biological_target_id = bt.id
+        LEFT JOIN bibliography b ON b.id = ptr.bibliography_id
+        WHERE pf.direction='forward'
+    """
+
+    params: List = []
+    idx = 1
+    if erv_family:
+        query += f" AND f.name = ${idx}"; params.append(erv_family); idx += 1
+    if erv_subgroup:
+        query += f" AND s.name = ${idx}"; params.append(erv_subgroup); idx += 1
+    if erv_component:
+        query += f" AND c.name = ${idx}"; params.append(erv_component); idx += 1
+    if herv_name:
+        query += f" AND bt.name = ${idx}"; params.append(herv_name); idx += 1
+    if dna is not None:
+        query += f" AND pp.dna = ${idx}"; params.append(dna); idx += 1
+    if hervolution is not None:
+        query += f" AND pp.hervolution = ${idx}"; params.append(hervolution)
+
+    query += " GROUP BY pf.sequence, pp.pair_index, pp.dna, pp.hervolution, f.name, s.name, c.name, bt.name"
+
+    async with app.state.db.acquire() as conn:
+        rows = await conn.fetch(query, *params)
+
+    results = []
+    for row in rows:
+        item = dict(row)
+        # Ensure JSON fields are Python lists
+        import json
+        item["reverse_seqs"] = json.loads(item["reverse_seqs"]) if isinstance(item["reverse_seqs"], str) else item["reverse_seqs"]
+        item["references"] = json.loads(item["references"]) if isinstance(item["references"], str) else item["references"]
+        if not is_private:
+            item.pop("hervolution", None)
+        results.append(item)
+
+    return results
+
 @app.get("/primers_forward")
 async def get_primers_forward(forward_seq: str):
     query = """
@@ -224,5 +309,97 @@ async def get_loci(pair_index: int = None, genome_build: str = None, name: str =
 
     async with app.state.db.acquire() as conn:
         rows = await conn.fetch(query, *params)
+
+    return [dict(row) for row in rows]
+
+@app.get("/primer_loci")
+async def primer_loci(
+    pair_index: Optional[int] = None,
+    genome_build: Optional[str] = None,  # "hg19" or "hg38"
+    herv_name: Optional[str] = None,
+    token: str = Depends(optional_token)
+):
+    is_private = False
+    if token:
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            if payload.get("role") == "private":
+                is_private = True
+        except JWTError:
+            pass
+
+    query = """
+        SELECT pf.sequence AS forward_seq,
+               pp.pair_index,
+               f.name AS family_name,
+               s.name AS subgroup_name,
+               c.name AS component_name,
+               bt.name AS herv_name,
+               lc.hg19_coord,
+               lc.hg38_coord
+        FROM primer pf
+        JOIN primer_pair pp ON pp.id = pf.primer_pair_id
+        JOIN primer_target pt ON pt.primer_pair_id = pp.id
+        JOIN biological_target bt ON pt.biological_target_id = bt.id
+        JOIN herv_family f ON bt.herv_family_id = f.id
+        LEFT JOIN herv_subgroup s ON bt.herv_subgroup_id = s.id
+        JOIN herv_component c ON bt.herv_component_id = c.id
+        JOIN locus l ON l.name = bt.name
+        JOIN locus_coordinate lc ON lc.locus_id = l.id
+        WHERE pf.direction='forward'
+    """
+
+    params = []
+    idx = 1
+    if pair_index:
+        query += f" AND pp.pair_index = ${idx}"; params.append(pair_index); idx += 1
+    if herv_name:
+        query += f" AND bt.name = ${idx}"; params.append(herv_name); idx += 1
+    if genome_build in ["hg19", "hg38"]:
+        query += f" AND lc.{genome_build}_coord IS NOT NULL"
+
+    async with app.state.db.acquire() as conn:
+        rows = await conn.fetch(query, *params)
+
+    return [dict(row) for row in rows]
+
+
+@app.get("/primer_stats")
+async def primer_stats(token: str = Depends(optional_token)):
+    """
+    Aggregate statistics of primers per ERV family / subgroup / component.
+    Returns counts of forward primers, reverse primers, and total primer pairs.
+    """
+    is_private = False
+    if token:
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            if payload.get("role") == "private":
+                is_private = True
+        except JWTError:
+            pass
+
+    query = """
+        SELECT f.name AS family_name,
+               s.name AS subgroup_name,
+               c.name AS component_name,
+               COUNT(DISTINCT pf.id) AS forward_count,
+               COUNT(DISTINCT pr.id) AS reverse_count,
+               COUNT(DISTINCT pp.id) AS primer_pair_count
+        FROM primer pf
+        JOIN primer_pair pp ON pp.id = pf.primer_pair_id
+        JOIN primer pr ON pr.primer_pair_id = pp.id AND pr.direction='reverse'
+        JOIN primer_target pt ON pt.primer_pair_id = pp.id
+        JOIN biological_target bt ON pt.biological_target_id = bt.id
+        JOIN herv_family f ON bt.herv_family_id = f.id
+        LEFT JOIN herv_subgroup s ON bt.herv_subgroup_id = s.id
+        JOIN herv_component c ON bt.herv_component_id = c.id
+        WHERE pf.direction='forward'
+        GROUP BY f.name, s.name, c.name
+        ORDER BY f.name, s.name, c.name
+    """
+
+    async with app.state.db.acquire() as conn:
+        rows = await conn.fetch(query)
 
     return [dict(row) for row in rows]
