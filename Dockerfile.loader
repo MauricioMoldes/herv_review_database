@@ -9,6 +9,7 @@ RUN apt-get update && \
 
 COPY src/ /app/src/
 COPY data/ /app/data/
+COPY data/ /app/src/data/
 COPY requirements.txt /app/
 
 RUN pip install --no-cache-dir -r requirements.txt
