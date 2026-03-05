@@ -1,5 +1,5 @@
 -- ============================================================
--- HERV Primer Relational Database Schema
+-- HERV Primer Relational Database Schema (fixed)
 -- PostgreSQL 16+
 -- Updated Bibliography Model
 -- ============================================================
@@ -52,12 +52,12 @@ CREATE TABLE biological_target (
 );
 
 -- ============================================================
--- 3. PRIMER PAIRS
+-- 3. PRIMER SETS
 -- ============================================================
 
-CREATE TABLE primer_pair (
+CREATE TABLE primer_set (
     id SERIAL PRIMARY KEY,
-    pair_index INT UNIQUE NOT NULL,
+    set_index INT UNIQUE NOT NULL,
     dna BOOLEAN DEFAULT FALSE,
     hervolution BOOLEAN DEFAULT FALSE,
     notes TEXT,
@@ -66,28 +66,27 @@ CREATE TABLE primer_pair (
 
 CREATE TABLE primer (
     id SERIAL PRIMARY KEY,
-    primer_pair_id INT NOT NULL
-        REFERENCES primer_pair(id)
+    primer_set_id INT NOT NULL
+        REFERENCES primer_set(id)
         ON DELETE CASCADE,
     name TEXT,
     sequence TEXT NOT NULL,
     direction TEXT NOT NULL
-        CHECK (direction IN ('forward', 'reverse')),
-    UNIQUE (primer_pair_id, direction)
+        CHECK (direction IN ('forward', 'reverse'))
 );
 
 -- ============================================================
--- 4. PRIMER ↔ BIOLOGICAL TARGET
+-- 4. PRIMER SET ↔ BIOLOGICAL TARGET
 -- ============================================================
 
-CREATE TABLE primer_target (
-    primer_pair_id INT NOT NULL
-        REFERENCES primer_pair(id)
+CREATE TABLE primer_set_target (
+    primer_set_id INT NOT NULL
+        REFERENCES primer_set(id)
         ON DELETE CASCADE,
     biological_target_id INT NOT NULL
         REFERENCES biological_target(id)
         ON DELETE CASCADE,
-    PRIMARY KEY (primer_pair_id, biological_target_id)
+    PRIMARY KEY (primer_set_id, biological_target_id)
 );
 
 -- ============================================================
@@ -118,24 +117,23 @@ CREATE TABLE locus_coordinate (
 -- ============================================================
 -- 6. PRIMER ↔ LOCUS
 -- ============================================================
-
-CREATE TABLE primer_locus (
-    primer_pair_id INT NOT NULL
-        REFERENCES primer_pair(id)
+CREATE TABLE primer_set_locus (
+    primer_set_id INT NOT NULL
+        REFERENCES primer_set(id)
         ON DELETE CASCADE,
     locus_id INT NOT NULL
         REFERENCES locus(id)
         ON DELETE CASCADE,
-    PRIMARY KEY (primer_pair_id, locus_id)
+    PRIMARY KEY (primer_set_id, locus_id)
 );
 
 -- ============================================================
--- 7. BIBLIOGRAPHY (RENAMED + CLEAN MODEL)
+-- 7. BIBLIOGRAPHY
 -- ============================================================
 
 CREATE TABLE bibliography (
     id SERIAL PRIMARY KEY,
-    citation_key TEXT UNIQUE NOT NULL,  -- LaTeX/BibTeX key
+    citation_key TEXT UNIQUE NOT NULL,
     doi TEXT UNIQUE,
     title TEXT,
     authors TEXT,
@@ -143,7 +141,7 @@ CREATE TABLE bibliography (
     year INT,
     pubmed_id TEXT,
     url TEXT,
-    raw_bibtex TEXT,  -- optional: store full original entry
+    raw_bibtex TEXT,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -151,60 +149,77 @@ CREATE TABLE bibliography (
 -- 8. REFERENCES FOR PRIMER ↔ TARGET
 -- ============================================================
 
-CREATE TABLE primer_target_reference (
-    primer_pair_id INT NOT NULL,
+CREATE TABLE primer_set_target_reference (
+    primer_set_id INT NOT NULL,
     biological_target_id INT NOT NULL,
     bibliography_id INT NOT NULL
         REFERENCES bibliography(id)
         ON DELETE CASCADE,
-    PRIMARY KEY (primer_pair_id, biological_target_id, bibliography_id),
-    FOREIGN KEY (primer_pair_id, biological_target_id)
-        REFERENCES primer_target(primer_pair_id, biological_target_id)
+    PRIMARY KEY (primer_set_id, biological_target_id, bibliography_id),
+    FOREIGN KEY (primer_set_id, biological_target_id)
+        REFERENCES primer_set_target(primer_set_id, biological_target_id)
         ON DELETE CASCADE
 );
 
-
-CREATE TABLE primer_pair_reference (
-    primer_pair_id INT NOT NULL
-        REFERENCES primer_pair(id)
+CREATE TABLE primer_set_reference (
+    primer_set_id INT NOT NULL
+        REFERENCES primer_set(id)
         ON DELETE CASCADE,
     bibliography_id INT NOT NULL
         REFERENCES bibliography(id)
         ON DELETE CASCADE,
-    PRIMARY KEY (primer_pair_id, bibliography_id)
+    PRIMARY KEY (primer_set_id, bibliography_id)
 );
 
 -- ============================================================
 -- 9. REFERENCES FOR PRIMER ↔ LOCUS
 -- ============================================================
 
-CREATE TABLE primer_locus_reference (
-    primer_pair_id INT NOT NULL,
+CREATE TABLE primer_set_locus_reference (
+    primer_set_id INT NOT NULL,
     locus_id INT NOT NULL,
     bibliography_id INT NOT NULL
         REFERENCES bibliography(id)
         ON DELETE CASCADE,
-    PRIMARY KEY (primer_pair_id, locus_id, bibliography_id),
-    FOREIGN KEY (primer_pair_id, locus_id)
-        REFERENCES primer_locus(primer_pair_id, locus_id)
+    PRIMARY KEY (primer_set_id, locus_id, bibliography_id),
+    FOREIGN KEY (primer_set_id, locus_id)
+        REFERENCES primer_set_locus(primer_set_id, locus_id)
         ON DELETE CASCADE
 );
 
 -- ============================================================
--- 10. INDEXING FOR FAST API QUERIES
+-- 10. Explicit primer combinations (future idea)
 -- ============================================================
 
-CREATE INDEX idx_primer_pair_index
-    ON primer_pair(pair_index);
+--CREATE TABLE primer_combination (
+--   id SERIAL PRIMARY KEY,
+--    primer_set_id INT NOT NULL
+--        REFERENCES primer_set(id)
+--        ON DELETE CASCADE,
+--    forward_primer_id INT NOT NULL
+--        REFERENCES primer(id)
+--        ON DELETE CASCADE,
+--    reverse_primer_id INT NOT NULL
+--        REFERENCES primer(id)
+--        ON DELETE CASCADE,
+--    UNIQUE (forward_primer_id, reverse_primer_id)
+--);
+
+-- ============================================================
+-- 11. INDEXING FOR FAST API QUERIES
+-- ============================================================
+
+CREATE INDEX idx_primer_set_index
+    ON primer_set(set_index);
 
 CREATE INDEX idx_biological_target_lookup
     ON biological_target (herv_family_id, herv_subgroup_id, herv_component_id);
 
-CREATE INDEX idx_primer_target_target
-    ON primer_target (biological_target_id);
+CREATE INDEX idx_primer_set_target_target
+    ON primer_set_target (biological_target_id);
 
-CREATE INDEX idx_primer_locus_locus
-    ON primer_locus (locus_id);
+CREATE INDEX idx_primer_set_locus_locus
+    ON primer_set_locus (locus_id);
 
 CREATE INDEX idx_locus_coordinate_build
     ON locus_coordinate (locus_id, genome_build);
