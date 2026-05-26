@@ -26,6 +26,8 @@ app.add_middleware(
     allow_origins=[
         "http://10.62.55.108:3000",
         "http://localhost:3000",
+        "https://dnatabase.eu",
+        "https://www.dnatabase.eu",
     ],
     allow_credentials=True,
     allow_methods=["*"],
